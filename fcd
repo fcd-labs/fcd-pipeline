@@ -254,6 +254,7 @@ custom_data() {
 # to a Dashboard that knows them: the pinned Dashboard version of the showcase is 0.4.0 or higher (R_LIVE=1).
 LIVE_SINCE_DASHBOARD=0.4.0
 R_LIVE=0
+R_UNCHANGED=""; R_SAME_VERSION_CHANGED=""
 # Contract 0.5.0 (rows per container, changelog at a deployment, the demo reset): only for a Dashboard of 0.5.0 or higher.
 V05_SINCE_DASHBOARD=0.5.0
 R_V05=0
@@ -377,7 +378,12 @@ run_step() { # number name [container]: a step for the sub-product, or for one o
   t0=$(now_s)
   local before="$GATE_REASONS"
   set +e
-  if has "$fn"; then ( set -e; "$fn" ) >"$log" 2>&1 <&-; rc=$?
+  if [ -n "$R_CONTAINER" ] && case " $R_UNCHANGED " in *" $R_CONTAINER "*) true ;; *) false ;; esac; then
+    # A container has its own lifecycle: same version, same code as what is deployed, so nothing to check or build.
+    rc=0; STEP_SKIPPED=1
+    STEP_REASON="$R_CONTAINER $(ver_get "$R_REPO" "$(container_var "$R_CONTAINER")") ongewijzigd (draait al)"
+    echo "$STEP_REASON" >"$log"
+  elif has "$fn"; then ( set -e; "$fn" ) >"$log" 2>&1 <&-; rc=$?
   else echo "step $name is not implemented in the Pipeline" >"$log"; rc=1; STEP_REASON="stap $name bestaat niet in de Pipeline (issue)"; fi
   set -e
   # state written by the subshell
@@ -459,6 +465,9 @@ explain_for() { # gate reason -> id of an approved, not expired explain (configu
 # A repository says how its product is linted, tested and built in ci/steps.sh (ci_lint, ci_unit, ci_freshness, CI_*).
 
 step_static_check() { # lint + version consistency (per container: lint of that container; the versions once)
+  case " ${R_SAME_VERSION_CHANGED:-} " in *" $R_CONTAINER "*)
+    [ -n "$R_CONTAINER" ] && s_fail "code van $R_CONTAINER veranderd zonder nieuwe versie (nog $(ver_get "$R_REPO" "$(container_var "$R_CONTAINER")"))" ;;
+  esac
   if has ci_lint; then
     ci_lint "$R_CONTAINER" || [ "$(threshold code lintErrors/max 0)" != 0 ] || s_fail "lint-fouten (zie log)"
   else s_warn "geen lint ingesteld"; fi
@@ -914,6 +923,7 @@ step_sbom_licenses() { # SBOM (CycloneDX) per image and licenses
 
 step_deploy() { # deploy the whole sub-product (configuration: Pipeline.spec.deployTarget)
   [ -n "${CI_COMPOSE_FILES:-}" ] || { s_skip "geen containers om uit te rollen"; return 0; }
+  local c v
   local target; target=$(cfg Pipeline "$R_PIPELINE" spec/deployTarget docker-compose)
   [ "$target" = docker-compose ] || { s_fail "uitrollen naar $target kan de Pipeline nog niet (issue)"; return 0; }
   if [ "$R_ENV" = werkplek ]; then
@@ -925,6 +935,11 @@ step_deploy() { # deploy the whole sub-product (configuration: Pipeline.spec.dep
   compose_r "$R_PROJECT" up -d --no-build --remove-orphans
   wait_ready "$R_PROJECT" || { s_fail "$R_SUBPRODUCT niet bereikbaar binnen $(threshold deploy readySeconds/max 60) s"; return 0; }
   compose_r "$R_PROJECT" ps
+  # What is deployed now (commit and container versions): a container that stays the same skips its steps next time.
+  mkdir -p "$R_REPO/.fcd"
+  { echo "DEPLOYED_SHA=$(git -C "$R_REPO" rev-parse HEAD)"
+    for c in $R_CONTAINERS; do v=$(container_var "$c"); echo "$v=$(ver_get "$R_REPO" "$v")"; done
+  } >"$R_REPO/.fcd/deployed.env"
   step_state R_E2E_PROJECT "$R_PROJECT"
   step_state R_DEPLOYED 1
 }
@@ -1018,13 +1033,37 @@ start_run() { # repo env showcase-dir
   R_RELEASE_TYPE=planned
   changelog_heading "$R_REPO" "$R_VERSION" | grep -qi noodpatch && R_RELEASE_TYPE=emergency
   trigger_of_head
-  CI_COMPOSE_FILES=""; CI_CONTRACT_TARGETS=""; CI_E2E_DIR=""; CI_READY_URL=""; CI_SUBPRODUCT_CONTAINERS=""
+  CI_COMPOSE_FILES=""; CI_CONTRACT_TARGETS=""; CI_E2E_DIR=""; CI_READY_URL=""; CI_SUBPRODUCT_CONTAINERS=""; CI_CONTAINER_PATHS=""
   # shellcheck source=/dev/null
   [ -f "$R_REPO/ci/steps.sh" ] && . "$R_REPO/ci/steps.sh"
   R_CONTAINERS=$CI_SUBPRODUCT_CONTAINERS
+  containers_unchanged
   # The deployed containers know their showcase, experiment and environment (key-result measurement).
   export FCD_EXPERIMENT="$R_EXPERIMENT" FCD_ENVIRONMENT="$R_ENV"
   trap 'ephemeral_down' EXIT
+}
+
+container_paths() { # container -> its source paths (product fact: CI_CONTAINER_PATHS "container=path path"), empty if unknown
+  printf '%s\n' "${CI_CONTAINER_PATHS:-}" | sed -n "s/^$1=//p" | head -1
+}
+
+containers_unchanged() { # sets R_UNCHANGED: containers whose version and code equal what is deployed (they skip steps 1-4),
+  # and R_SAME_VERSION_CHANGED: containers whose code changed without a new version (the code gate closes)
+  R_UNCHANGED=""; R_SAME_VERSION_CHANGED=""
+  local f="$R_REPO/.fcd/deployed.env" c var deployed paths sha image
+  [ "$R_ENV" = lokaal ] && [ -f "$f" ] || return 0
+  sha=$(sed -n 's/^DEPLOYED_SHA=//p' "$f")
+  git -C "$R_REPO" cat-file -e "$sha^{commit}" 2>/dev/null || return 0
+  for c in $R_CONTAINERS; do
+    var=$(container_var "$c"); deployed=$(sed -n "s/^$var=//p" "$f"); paths=$(container_paths "$c")
+    [ -n "$deployed" ] && [ -n "$paths" ] && [ "$deployed" = "$(ver_get "$R_REPO" "$var")" ] || continue
+    # shellcheck disable=SC2086
+    if ! git -C "$R_REPO" diff --quiet "$sha" HEAD -- $paths; then
+      R_SAME_VERSION_CHANGED="$R_SAME_VERSION_CHANGED $c"; continue
+    fi
+    image=$(compose_r "$R_PROJECT" config --images "$c" 2>/dev/null | head -1)
+    [ -n "$image" ] && docker image inspect "$image" >/dev/null 2>&1 && R_UNCHANGED="$R_UNCHANGED $c"
+  done
 }
 
 trigger_of_head() {
@@ -1660,6 +1699,7 @@ cmd_demo() { # demo reset [--save] [--by name] | seed | diff [branch] | merge <b
       for p in $(showcase_projects | grep -vx "$SC_PREFIX-dashboard" | grep -vx "$SC_PREFIX-registry"); do
         project_exists "$p" && docker compose -p "$p" down --remove-orphans >/dev/null 2>&1 && ok "$p leeggemaakt"
       done
+      for r in $(agent_repos); do rm -f "$SC_HOME/work/$r/.fcd/deployed.env"; done
       while read -r r b; do
         [ -n "$r" ] && branches="${branches:+$branches,}$(printf '{"repository":%s,"branch":%s}' "$(json_str "$r")" "$(json_str "$b")")"
       done <<EOF_BRANCHES

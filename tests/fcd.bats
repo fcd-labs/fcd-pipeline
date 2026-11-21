@@ -245,3 +245,25 @@ PROPS
   R_V05=0
   [ -z "$(container_json)" ]
 }
+
+@test "a container with the same version and code as what is deployed skips its steps; changed code without a new version closes the code gate" {
+  R_REPO=$(mktemp -d); git -C "$R_REPO" init -q; git -C "$R_REPO" config user.email t@t; git -C "$R_REPO" config user.name t
+  mkdir -p "$R_REPO/fe" "$R_REPO/be" "$R_REPO/.fcd"
+  printf 'FE_VERSION=1.0.0\nBE_VERSION=1.0.0\n' >"$R_REPO/versions.env"; echo a >"$R_REPO/fe/a"; echo b >"$R_REPO/be/b"
+  git -C "$R_REPO" add -A; git -C "$R_REPO" commit -qm start
+  printf 'DEPLOYED_SHA=%s\nFE_VERSION=1.0.0\nBE_VERSION=1.0.0\n' "$(git -C "$R_REPO" rev-parse HEAD)" >"$R_REPO/.fcd/deployed.env"
+  # the patch: the backend changes with a new version, the frontend stays the same
+  echo b2 >"$R_REPO/be/b"; sed -i 's/BE_VERSION=1.0.0/BE_VERSION=1.0.1/' "$R_REPO/versions.env"
+  git -C "$R_REPO" commit -qam patch
+  R_ENV=lokaal R_CONTAINERS="fe be" CI_CONTAINER_PATHS=$'fe=fe\nbe=be'
+  compose_r() { echo img; }
+  docker() { return 0; }
+  containers_unchanged
+  [ "$R_UNCHANGED" = " fe" ]
+  [ -z "$R_SAME_VERSION_CHANGED" ]
+  # the frontend code changes, but its version does not
+  echo a2 >"$R_REPO/fe/a"; git -C "$R_REPO" commit -qam sneaky
+  containers_unchanged
+  [ -z "$R_UNCHANGED" ]
+  [ "$R_SAME_VERSION_CHANGED" = " fe" ]
+}
