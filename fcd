@@ -1531,6 +1531,11 @@ demo_prepare() { # repo: the work clone of the agent on main of the local git se
   git -C "$work" remote set-url origin "$(repo_url "$r")"
   git -C "$work" fetch -q --prune --prune-tags --force --tags origin main
   git -C "$work" checkout -q --detach origin/main && git -C "$work" clean -qfdx -e .fcd
+  # Tags that are no longer at the source (such as the release of the previous demo) go: the start has no v1.0.1.
+  local t
+  for t in $(git -C "$work" tag -l); do
+    git -C "$work" ls-remote --exit-code --tags origin "refs/tags/$t" >/dev/null 2>&1 || git -C "$work" tag -d "$t" >/dev/null
+  done
   git -C "$work" rev-parse origin/main >"$SC_HOME/state/repo-$r.last"
 }
 
