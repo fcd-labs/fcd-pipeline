@@ -1405,6 +1405,7 @@ cmd_agent() {
   if [ "$(cfg Pipeline "$(cfg_first Pipeline)" spec/trigger merge-on-main)" = dashboard-button ]; then
     # The human gate at the start: the agent runs only when the product owner presses the button on the Dashboard.
     say "$(now_iso) Pipeline-agent gestart: showcase $SC_NAME (wacht op de knop op het Dashboard; bron: $(repo_url "$(basename "$sc")"))"
+    release_stale_commands
     while true; do agent_command "$sc" || true; flush_outbox >/dev/null 2>&1 || true; sleep "$FCD_COMMAND_INTERVAL"; done
   fi
   say "$(now_iso) Pipeline-agent gestart: showcase $SC_NAME (elke ${FCD_AGENT_INTERVAL}s)"
@@ -1424,6 +1425,15 @@ demo_unmerged() { # in demo mode: the prepared branches that are not merged on m
 demo_unmerged_hint() { # the unmerged prepared branches, and how to merge them
   local out; out=$(demo_unmerged | paste -sd, - | sed 's/,/, /g')
   [ -z "$out" ] || printf ' – nog niet gemerged: %s. Merge eerst (knop of ./fcd-pipeline/fcd demo merge)' "$out"
+}
+
+release_stale_commands() { # commands claimed by an agent that is gone: finished as failed, so the buttons work again
+  local id
+  for id in $(curl -fsS -m 3 "$(dashboard_base)/api/v1/commands" 2>/dev/null | tr '{' '\n' | grep '"status":"claimed"' \
+      | sed -n 's/.*"id":"\([0-9a-f-]*\)".*/\1/p'); do
+    command_done "$id" failed "afgebroken: de Pipeline-agent is opnieuw gestart"
+    say "$(now_iso) commando $id afgebroken (agent opnieuw gestart)"
+  done
 }
 
 agent_command() { # showcase repository: carry out one command of the Dashboard (start a run, reset the demo)
@@ -1487,7 +1497,11 @@ cmd_up() { # one command per showcase: its Dashboard and its Pipeline agent, wit
 cmd_down() {
   local sc=""; [ "${1:-}" = --showcase ] && sc=$2
   showcase_load "$(cd "$(showcase_dir_arg "$sc")" && pwd)" "$(mktemp)"
-  if [ -f "$SC_HOME/agent.pid" ]; then kill "$(cat "$SC_HOME/agent.pid")" 2>/dev/null || true; rm -f "$SC_HOME/agent.pid"; ok "Pipeline-agent gestopt"; fi
+  if [ -f "$SC_HOME/agent.pid" ]; then
+    # First what the agent is running (a pipeline run, a reset), then the agent itself.
+    pkill -TERM -P "$(cat "$SC_HOME/agent.pid")" 2>/dev/null || true
+    kill "$(cat "$SC_HOME/agent.pid")" 2>/dev/null || true; rm -f "$SC_HOME/agent.pid"; ok "Pipeline-agent gestopt"
+  fi
   local p; for p in $(showcase_projects); do
     project_exists "$p" && docker compose -p "$p" stop >/dev/null 2>&1 && ok "$p gestopt"
   done
