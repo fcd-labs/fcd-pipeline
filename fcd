@@ -1463,30 +1463,33 @@ demo_require_local() {
 }
 
 demo_seed() { # fill the local git server from the checkouts next to the Pipeline; keep the start as refs/demo-seed
-  local r co bare start b pat
+  # The local git server fetches from the checkout (nothing is pushed, so no hook is involved).
+  local r co bare start b o
   mkdir -p "$FCD_HOME/git"
+  start=$(demo_cfg startTag demo-start)
   for r in $(demo_repos); do
     co="$FCD_ROOT/$r"; bare="$FCD_HOME/git/$r.git"
     [ -d "$co/.git" ] || die "$r: geen checkout in $FCD_ROOT"
     [ -d "$bare" ] || git init -q --bare -b main "$bare"
     git -C "$bare" for-each-ref --format='%(refname)' refs/heads refs/tags refs/demo-seed | while read -r b; do git -C "$bare" update-ref -d "$b"; done
-    start=$(demo_cfg startTag demo-start)
+    git -C "$bare" fetch -q --no-tags "$co" 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
     if git -C "$co" rev-parse -q --verify "refs/tags/$start" >/dev/null; then
-      git -C "$co" push -q "$bare" "refs/tags/$start^{commit}:refs/heads/main" "refs/tags/$start:refs/tags/$start"
+      git -C "$bare" fetch -q --no-tags "$co" "refs/tags/$start:refs/tags/$start"
+      git -C "$bare" update-ref refs/heads/main "$(git -C "$bare" rev-parse "refs/tags/$start^{commit}")"
     else
-      git -C "$co" push -q "$bare" "HEAD:refs/heads/main"
+      git -C "$bare" fetch -q --no-tags "$co" "HEAD:refs/heads/main"
     fi
-    git -C "$co" push -q "$bare" 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
     # The prepared changes (configuration: Pipeline.spec.demo.branches), such as the patch: local branches only.
-    for pat in $(demo_cfg branches | tr -d '[],"'); do
+    cfg_list Pipeline "$(cfg_first Pipeline)" spec/demo/branches | while IFS= read -r pat; do
+      [ -n "$pat" ] || continue
       git -C "$co" for-each-ref --format='%(refname:short)' "refs/heads/$pat" | while read -r b; do
-        git -C "$co" push -q "$bare" "refs/heads/$b:refs/heads/$b"
+        git -C "$bare" fetch -q --no-tags "$co" "refs/heads/$b:refs/heads/$b"
       done
     done
     git -C "$bare" for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags | while read -r b o; do
       git -C "$bare" update-ref "refs/demo-seed/${b#refs/}" "$o"
     done
-    ok "$r: lokale git-server $bare (main = ${start} of HEAD)"
+    ok "$r: lokale git-server $bare (main = $(git -C "$co" rev-parse -q --verify "refs/tags/$start" >/dev/null && echo "$start" || echo HEAD))"
   done
 }
 
@@ -1550,7 +1553,7 @@ cmd_demo() { # demo reset [--save] [--by name] | seed | diff [branch] | merge <b
   demo_require_local
   by=${by:-$(cfg QualityGate human spec/approver "product owner")}
   local product; product=$(agent_repos | head -1)
-  [ -n "$branch" ] || branch=$(git -C "$FCD_HOME/git/$product.git" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vx main | head -1)
+  [ -n "$branch" ] || branch=$(git -C "$FCD_HOME/git/$product.git" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vx main | head -1 || true)
   case $action in
     seed) demo_seed ;;
     reset)
