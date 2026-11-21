@@ -1122,7 +1122,7 @@ human_gate_button() { # gate step: the product owner presses a button on the Das
     # The start: this run exists because someone pressed the start button. On the werkplek there is no button.
     [ "$R_ENV" = lokaal ] || return 0
     gate_started "$g" beforeSteps "$step"
-    gate_open "$g" "$step" "gestart door $R_TRIGGER_NAME (knop op het Dashboard)"
+    gate_open "$g" "$step" "gestart door $R_TRIGGER_NAME (${FCD_TRIGGER_VIA:-knop op het Dashboard})"
     return 0
   fi
   if [ -n "$tag" ] && ! ver_gt "$R_VERSION" "$old"; then info "geen nieuwe versie ($R_VERSION = $tag): niet releasen"; return 0; fi
@@ -1345,20 +1345,24 @@ cmd_agent() {
   while true; do agent_once "$sc" || true; flush_outbox >/dev/null 2>&1 || true; sleep "$FCD_AGENT_INTERVAL"; done
 }
 
-demo_unmerged_hint() { # in demo mode: the prepared branches that are not merged yet, and how to merge them
+demo_unmerged() { # in demo mode: the prepared branches that are not merged on main yet, one "repository branch" per line
   [ "$(cfg Pipeline "$(cfg_first Pipeline)" spec/source origin)" = local-git ] || return 0
-  local r b out=""
+  local r b
   for r in $(agent_repos); do
     for b in $(git -C "$FCD_HOME/git/$r.git" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vx main || true); do
-      git -C "$FCD_HOME/git/$r.git" merge-base --is-ancestor "$b" main 2>/dev/null || out="${out:+$out, }$r $b"
+      git -C "$FCD_HOME/git/$r.git" merge-base --is-ancestor "$b" main 2>/dev/null || printf '%s %s\n' "$r" "$b"
     done
   done
-  [ -z "$out" ] || printf ' – nog niet gemerged: %s. Merge eerst: ./fcd-pipeline/fcd demo merge' "$out"
+}
+
+demo_unmerged_hint() { # the unmerged prepared branches, and how to merge them
+  local out; out=$(demo_unmerged | paste -sd, - | sed 's/,/, /g')
+  [ -z "$out" ] || printf ' – nog niet gemerged: %s. Merge eerst (knop of ./fcd-pipeline/fcd demo merge)' "$out"
 }
 
 agent_command() { # showcase repository: carry out one command of the Dashboard (start a run, reset the demo)
   local line id kind by save
-  line=$(command_claim start-run,demo-reset)
+  line=$(command_claim start-run,demo-reset,demo-merge)
   [ -n "$line" ] || return 0
   IFS=$'\t' read -r id kind by save _ <<<"$line"
   by=${by:-$(cfg QualityGate human spec/approver "product owner")}
@@ -1377,6 +1381,10 @@ agent_command() { # showcase repository: carry out one command of the Dashboard 
       local opt=""; [ "$save" = true ] && opt=--save
       if "$FCD_SELF" demo reset --showcase "$1" --by "$by" $opt >>"$SC_HOME/agent.log" 2>&1; then command_done "$id" "done" "demo teruggezet"
       else command_done "$id" failed "reset mislukt, zie fcd logs"; fi ;;
+    demo-merge)
+      say "$(now_iso) merge door $by (knop op het Dashboard)"
+      if "$FCD_SELF" demo merge --showcase "$1" --by "$by" >>"$SC_HOME/agent.log" 2>&1; then command_done "$id" "done" "gemerged op main; start nu de pipeline"
+      else command_done "$id" failed "merge mislukt, zie fcd logs"; fi ;;
     *) command_done "$id" rejected "onbekend commando: $kind" ;;
   esac
 }
@@ -1517,23 +1525,32 @@ demo_restore() { # every bare repository back to its seed: main to the start, th
   done
 }
 
-demo_deploy() { # repo: deploy what is on main of the local git server (the start), so the demo begins from there
+demo_prepare() { # repo: the work clone of the agent on main of the local git server (the start), tags as there
   local r=$1 work="$SC_HOME/work/$1"
   [ -d "$work/.git" ] || git clone -q "$(repo_url "$r")" "$work"
   git -C "$work" remote set-url origin "$(repo_url "$r")"
   git -C "$work" fetch -q --prune --prune-tags --force --tags origin main
   git -C "$work" checkout -q --detach origin/main && git -C "$work" clean -qfdx -e .fcd
-  git -C "$work" tag -l | while read -r t; do git -C "$work" ls-remote --exit-code --tags origin "refs/tags/$t" >/dev/null || git -C "$work" tag -d "$t" >/dev/null; done
   git -C "$work" rev-parse origin/main >"$SC_HOME/state/repo-$r.last"
-  (
-    FCD_TRIGGER_KIND=human FCD_TRIGGER_NAME=$DEMO_BY start_run "$work" lokaal "$SC_REPO"
-    [ -n "${CI_COMPOSE_FILES:-}" ] || exit 0
-    compose_r "$R_PROJECT" up -d --build --remove-orphans >"$SC_HOME/demo-deploy-$r.log" 2>&1 || { tail -20 "$SC_HOME/demo-deploy-$r.log"; exit 1; }
-    wait_ready "$R_PROJECT" || { bad "$R_SUBPRODUCT niet bereikbaar"; exit 1; }
-    # Not a pipeline run (run is empty): the start of the demo, with its changelog for the Dashboard.
-    R_ID=""; R_DEPLOYED=1; emit_deployed
-    ok "$R_SUBPRODUCT $R_VERSION uitgerold (experiment $R_EXPERIMENT)"
-  )
+}
+
+demo_start_run() { # repo cfgwork: the start goes through the Pipeline (only the Pipeline deploys), triggered by the reset
+  local r=$1 cfgwork=$2 work="$SC_HOME/work/$1" runner run
+  runner="$(pinned fcd-pipeline "$(pipeline_version)")/fcd"
+  demo_prepare "$r"
+  say "pipeline van de start ($r), live op het Dashboard"
+  # The start is never released: should it reach the human gate before releasing, that gate closes after 30 s.
+  FCD_TRIGGER_KIND=human FCD_TRIGGER_NAME=$DEMO_BY FCD_TRIGGER_VIA="Demo opnieuw" FCD_SHOWCASE_DIR="$cfgwork" FCD_APPROVAL_TIMEOUT=30 \
+    "$runner" ci "$work" --env lokaal >"$SC_HOME/demo-start-$r.log" 2>&1 || true
+  run=$(ls -td "$work"/.fcd/runs/*/ 2>/dev/null | head -1)
+  if grep -q '"dev.cdevents.service.deployed' "${run}events.jsonl" 2>/dev/null; then
+    ok "$r: $(ver_get "$work" SUBPRODUCT) $(ver_get "$work" SUBPRODUCT_VERSION) uitgerold door de Pipeline ($(grep -o 'run [^ ]*: [a-z]* ([0-9]*s)' "$SC_HOME/demo-start-$r.log" | tail -1))"
+    grep -q 'gate dicht' "$SC_HOME/demo-start-$r.log" && info "  $(grep -o '[a-z]*-gate dicht: .*' "$SC_HOME/demo-start-$r.log" | head -1 | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-200)"
+    return 0
+  fi
+  tail -15 "$SC_HOME/demo-start-$r.log"
+  bad "$r: de start is niet uitgerold (zie $SC_HOME/demo-start-$r.log)"
+  return 1
 }
 
 demo_warm() { # repo: build the prepared branches once (images and unit tests), so the demo run hits the layer cache
@@ -1554,8 +1571,8 @@ demo_warm() { # repo: build the prepared branches once (images and unit tests), 
   done
 }
 
-demo_logline() { # the reset as a log line in the new, empty log (contract 0.5.0; run is empty: not a pipeline run)
-  local by=$1 exp=$2 saved=$3 product
+demo_logline() { # by experiment type content: a log line of the demo (contract 0.5.0; run is empty: not a pipeline run)
+  local by=$1 exp=$2 type=$3 content=$4 product
   ver_ge "$(dashboard_version)" "$V05_SINCE_DASHBOARD" || return 0
   product="$SC_HOME/work/$(agent_repos | head -1)"
   R_NAME=$(basename "$SC_REPO"); R_DIR="$SC_HOME"; R_REPO="$product"; R_ID=""
@@ -1563,7 +1580,7 @@ demo_logline() { # the reset as a log line in the new, empty log (contract 0.5.0
   R_TRIGGER_KIND=human; R_TRIGGER_NAME=$by; R_CONTAINERS=""
   R_PRODUCT=$(ver_get "$product" PRODUCT); R_SUBPRODUCT=$(ver_get "$product" SUBPRODUCT); R_VERSION=$(ver_get "$product" SUBPRODUCT_VERSION)
   R_EXPERIMENT=$exp; R_ENV=lokaal; R_RELEASE_TYPE=planned
-  emit "dev.cdeventsx.fcd-demo.reset.0.1.0" "$SC_NAME" "$(printf '{"startTag":%s,"saved":%s}' "$(json_str "$(demo_cfg startTag demo-start)")" "$saved")"
+  emit "$type" "$SC_NAME" "$content"
 }
 
 cmd_demo() { # demo reset [--save] [--by name] | seed | diff [branch] | merge <branch> [--by name]   (--showcase dir)
@@ -1595,13 +1612,24 @@ cmd_demo() { # demo reset [--save] [--by name] | seed | diff [branch] | merge <b
       local exp; exp="demo-$(date +%Y%m%d-%H%M%S)"
       printf '%s\n' "$exp" >"$SC_HOME/experiment"
       ok "lege log: experiment $exp"
-      # 3. the start deployed again, measuring in the new experiment
+      # The reset itself is the first log line of the new log, with the prepared changes that wait.
       export DEMO_BY=$by
-      local r; for r in $(agent_repos); do demo_deploy "$r"; done
+      local r b cfgwork branches=""
+      cfgwork="$SC_HOME/work/$(basename "$SC_REPO")"
+      [ -d "$cfgwork/.git" ] || git clone -q "$(repo_url "$(basename "$SC_REPO")")" "$cfgwork"
+      git -C "$cfgwork" fetch -q --force --tags origin main && git -C "$cfgwork" checkout -q --detach origin/main
+      git -C "$cfgwork" rev-parse origin/main >"$SC_HOME/state/config.last"
+      for r in $(agent_repos); do demo_prepare "$r"; done
+      while read -r r b; do
+        [ -n "$r" ] && branches="${branches:+$branches,}$(printf '{"repository":%s,"branch":%s}' "$(json_str "$r")" "$(json_str "$b")")"
+      done <<EOF_BRANCHES
+$(demo_unmerged)
+EOF_BRANCHES
+      demo_logline "$by" "$exp" "dev.cdeventsx.fcd-demo.reset.0.1.0" \
+        "$(printf '{"startTag":%s,"saved":%s,"branches":[%s]}' "$(json_str "$(demo_cfg startTag demo-start)")" "$([ "$save" = 1 ] && echo true || echo false)" "$branches")"
+      # 3. the start through the Pipeline, live on the Dashboard; the containers measure in the new experiment
+      for r in $(agent_repos); do demo_start_run "$r" "$cfgwork"; done
       for r in $(agent_repos); do demo_warm "$r"; done
-      git -C "$SC_HOME/work/$(basename "$SC_REPO")" fetch -q origin main 2>/dev/null && \
-        git -C "$SC_HOME/work/$(basename "$SC_REPO")" rev-parse origin/main >"$SC_HOME/state/config.last" 2>/dev/null || true
-      demo_logline "$by" "$exp" "$([ "$save" = 1 ] && echo true || echo false)"
       ok "demo staat klaar: $(agent_repos | tr '\n' ' ')op $(demo_cfg startTag demo-start)" ;;
     diff)
       local tmp; tmp=$(mktemp -d)
@@ -1616,6 +1644,8 @@ cmd_demo() { # demo reset [--save] [--by name] | seed | diff [branch] | merge <b
       git -C "$tmp/$product" -c user.name="$by" -c user.email="$email" merge -q --no-ff "origin/$branch" \
         -m "Merge $branch: $(git -C "$tmp/$product" log -1 --format=%s "origin/$branch")" -m "Pull request $branch, goedgekeurd door $by."
       git -C "$tmp/$product" push -q origin main
+      demo_logline "$by" "$(experiment_of)" "dev.cdeventsx.fcd-demo.merged.0.1.0" \
+        "$(printf '{"repository":%s,"branch":%s}' "$(json_str "$product")" "$(json_str "$branch")")"
       ok "$branch gemerged op main van $product (lokaal, door $by). Start de pipeline met de knop op het Dashboard."
       rm -rf "$tmp" ;;
     *) die "fcd demo reset [--save] [--by naam] | seed | diff [branch] | merge [branch] [--by naam]" ;;
