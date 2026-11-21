@@ -1452,6 +1452,8 @@ cmd_report() { # the status report and the log of the experiment, in the showcas
   file="$SC_REPO/reports/$(date -u +%Y-%m-%d-%H%M)-$SC_NAME-$exp.md"
   curl -fsS -m 10 "$base/api/v1/report?experiment=$exp" >"$file"
   ok "statusrapport: $file"
+  curl -fsS -m 10 "$base/api/v1/report?experiment=$exp&format=html" >"${file%.md}.html" \
+    && ok "statusrapport om te lezen: ${file%.md}.html" || info "geen HTML-versie (Dashboard ouder dan 0.5.0)"
   curl -fsS -m 30 "$base/api/v1/events?experiment=$exp" >"$SC_REPO/log/$exp.jsonl"
   ok "log: $SC_REPO/log/$exp.jsonl ($(wc -l <"$SC_REPO/log/$exp.jsonl" | tr -d ' ') logregels)"
 }

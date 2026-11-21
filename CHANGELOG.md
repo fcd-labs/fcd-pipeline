@@ -13,6 +13,7 @@ Alle wijzigingen per versie. Formaat: [Keep a Changelog](https://keepachangelog.
 - `fcd demo diff [branch]` en `fcd demo merge [branch]`: de klaarstaande wijziging laten zien en lokaal mergen, met de naam van de goedkeurder; ook via de knop "Patch mergen" op het Dashboard. De merge komt als logregel in de log (`fcd-demo.merged`).
 - De reset rolt de start uit via de Pipeline zelf (alleen de Pipeline rolt uit): live op het Dashboard, met de stappen tot en met de end-to-end test. De reset-logregel noemt de klaarstaande wijzigingen.
 - De startknop zonder iets nieuws op `main` zegt welke klaarstaande wijziging nog gemerged moet worden.
+- `fcd report` (en "Demo opnieuw" met bewaren) bewaart het statusrapport ook als pagina om te lezen (`.html`).
 - Stappen per container (`Step.spec.level: container`): statische controle, unittests, contracttest en bouwen draaien per container van het deelproduct, elk met een eigen logregel (`container`). Contracten per container (`Contract.spec.container`). Stubs zijn geen deel van het deelproduct: hun image wordt alleen gebouwd als het ontbreekt.
 - Ingekorte stappen voor de demo, met een goedgekeurde afwijking: end-to-end alleen de tests van `Step.spec.grep`; security, versheid, SBOM en licenties van dezelfde inhoud uit de cache van de voorbereiding (`Step.spec.cache`).
 - De changelog tot en met de uitgerolde versie in `service.deployed` (contract 0.5.0), voor de changelog-tab van het Dashboard.
