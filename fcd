@@ -727,25 +727,34 @@ step_integration_tests() { # the sub-product with stubs in a short-lived environ
   checks=$(cfg_list Step integration-tests spec/contractChecks | paste -sd, -)
   examples=$(cfg Step integration-tests spec/maxExamples 25)
   mkdir -p "$R_DIR/reports/integration"
-  # Schemathesis has no usable live count: the count so far after every contract target.
+  # Schemathesis has no usable live count: the count so far after every contract target that is done.
   local c_tests c_failed c_skipped
   test_started integration
   # Test traffic says so (product fact: CI_TEST_HEADERS), so it never counts as a guest in the key result.
-  local headers=() h t0
+  local headers=() h
   while IFS= read -r h; do [ -n "$h" ] && headers+=(--header "$h"); done <<EOF_HEADERS
 ${CI_TEST_HEADERS:-}
 EOF_HEADERS
+  # All contract targets at the same time (each in its own container); the count so far as each one finishes.
+  local pids=() names=() starts=() i=0 t0
+  t0=$(now_s)
   for t in $CI_CONTRACT_TARGETS; do # name=spec@url
     name=${t%%=*}; spec=${t#*=}; spec=${spec%@*}; url=${t##*@}
     echo "== schemathesis $name: $spec against $url (checks: ${checks:-all})"
-    t0=$(now_s)
     docker run --rm --network "${R_EPHEMERAL}_default" -v "$R_REPO":/spec:ro -v "$R_DIR/reports/integration":/reports \
       "$TOOL_SCHEMATHESIS" run "/spec/$spec" --url "$url" --checks "${checks:-all}" --max-examples "$examples" --workers 1 \
-      "${headers[@]}" --report junit --report-junit-path "/reports/TEST-$name.xml" || true
-    echo "== $name: $(( $(now_s) - t0 ))s"
+      "${headers[@]}" --report junit --report-junit-path "/reports/TEST-$name.xml" >"$R_DIR/integration-$name.log" 2>&1 &
+    pids+=("$!"); names+=("$name"); starts+=("$(now_s)")
+  done
+  while [ "$i" -lt "${#pids[@]}" ]; do
+    wait "${pids[$i]}" || true
+    echo "== ${names[$i]}: klaar na $(( $(now_s) - ${starts[$i]} ))s"
+    cat "$R_DIR/integration-${names[$i]}.log"
     read -r c_tests c_failed c_skipped _ <<<"$(junit_counts "$R_DIR/reports/integration")"
     test_progressed integration "$(( c_tests - c_failed - c_skipped ))" "$c_failed" "$c_skipped"
+    i=$((i + 1))
   done
+  echo "== alle contractdoelen samen: $(( $(now_s) - t0 ))s"
   report_tests integration "$R_DIR/reports/integration" "$(threshold build integrationTestsFailed/max 0)"
 }
 
