@@ -720,7 +720,9 @@ wait_ready() { # project: probe CI_READY_URL inside the project network, within 
 
 step_integration_tests() { # the sub-product with stubs in a short-lived environment; contract checks
   [ -n "${CI_CONTRACT_TARGETS:-}" ] || { s_skip "geen integratietests ingesteld"; return 0; }
+  local t_up; t_up=$(now_s)
   ephemeral_up || { s_fail "tijdelijke omgeving start niet"; return 0; }
+  echo "== tijdelijke omgeving klaar in $(( $(now_s) - t_up ))s"
   local t spec url name checks examples
   checks=$(cfg_list Step integration-tests spec/contractChecks | paste -sd, -)
   examples=$(cfg Step integration-tests spec/maxExamples 25)
@@ -728,12 +730,19 @@ step_integration_tests() { # the sub-product with stubs in a short-lived environ
   # Schemathesis has no usable live count: the count so far after every contract target.
   local c_tests c_failed c_skipped
   test_started integration
+  # Test traffic says so (product fact: CI_TEST_HEADERS), so it never counts as a guest in the key result.
+  local headers=() h t0
+  while IFS= read -r h; do [ -n "$h" ] && headers+=(--header "$h"); done <<EOF_HEADERS
+${CI_TEST_HEADERS:-}
+EOF_HEADERS
   for t in $CI_CONTRACT_TARGETS; do # name=spec@url
     name=${t%%=*}; spec=${t#*=}; spec=${spec%@*}; url=${t##*@}
     echo "== schemathesis $name: $spec against $url (checks: ${checks:-all})"
+    t0=$(now_s)
     docker run --rm --network "${R_EPHEMERAL}_default" -v "$R_REPO":/spec:ro -v "$R_DIR/reports/integration":/reports \
       "$TOOL_SCHEMATHESIS" run "/spec/$spec" --url "$url" --checks "${checks:-all}" --max-examples "$examples" --workers 1 \
-      --report junit --report-junit-path "/reports/TEST-$name.xml" || true
+      "${headers[@]}" --report junit --report-junit-path "/reports/TEST-$name.xml" || true
+    echo "== $name: $(( $(now_s) - t0 ))s"
     read -r c_tests c_failed c_skipped _ <<<"$(junit_counts "$R_DIR/reports/integration")"
     test_progressed integration "$(( c_tests - c_failed - c_skipped ))" "$c_failed" "$c_skipped"
   done
@@ -1636,6 +1645,12 @@ cmd_demo() { # demo reset [--save] [--by name] | seed | diff [branch] | merge <b
       git -C "$cfgwork" fetch -q --force --tags origin main && git -C "$cfgwork" checkout -q --detach origin/main
       git -C "$cfgwork" rev-parse origin/main >"$SC_HOME/state/config.last"
       for r in $(agent_repos); do demo_prepare "$r"; done
+      # A clean ShowKitchen: the containers of the sub-products go (the stubs forget the orders they received);
+      # the start run below deploys them again. Images and volumes stay.
+      local p
+      for p in $(showcase_projects | grep -vx "$SC_PREFIX-dashboard" | grep -vx "$SC_PREFIX-registry"); do
+        project_exists "$p" && docker compose -p "$p" down --remove-orphans >/dev/null 2>&1 && ok "$p leeggemaakt"
+      done
       while read -r r b; do
         [ -n "$r" ] && branches="${branches:+$branches,}$(printf '{"repository":%s,"branch":%s}' "$(json_str "$r")" "$(json_str "$b")")"
       done <<EOF_BRANCHES
