@@ -1525,6 +1525,24 @@ demo_deploy() { # repo: deploy what is on main of the local git server (the star
   )
 }
 
+demo_warm() { # repo: build the prepared branches once (images and unit tests), so the demo run hits the layer cache
+  # Configuration: Pipeline.spec.demo.warm (with an approved explain on the build step). Sends no log lines.
+  [ "$(demo_cfg warm false)" = true ] || return 0
+  local r=$1 b tmp
+  for b in $(git -C "$FCD_HOME/git/$r.git" for-each-ref --format='%(refname:short)' refs/heads | grep -vx main || true); do
+    tmp=$(mktemp -d)
+    git clone -q --branch "$b" "$FCD_HOME/git/$r.git" "$tmp/$r"
+    if (
+      start_run "$tmp/$r" werkplek "$SC_REPO"
+      [ -n "${CI_COMPOSE_FILES:-}" ] || exit 0
+      if has ci_unit; then for c in $R_CONTAINERS; do ci_unit "$c"; done; fi
+      compose_r "$R_PROJECT" build
+    ) >"$SC_HOME/demo-warm-$r.log" 2>&1; then ok "$r $b opgewarmd (images en unittests)"
+    else bad "$r $b: opwarmen mislukt (zie $SC_HOME/demo-warm-$r.log); de demo werkt, maar de pipeline duurt langer"; fi
+    rm -rf "$tmp"
+  done
+}
+
 demo_logline() { # the reset as a log line in the new, empty log (contract 0.5.0; run is empty: not a pipeline run)
   local by=$1 exp=$2 saved=$3 product
   ver_ge "$(dashboard_version)" "$V05_SINCE_DASHBOARD" || return 0
@@ -1569,6 +1587,7 @@ cmd_demo() { # demo reset [--save] [--by name] | seed | diff [branch] | merge <b
       # 3. the start deployed again, measuring in the new experiment
       export DEMO_BY=$by
       local r; for r in $(agent_repos); do demo_deploy "$r"; done
+      for r in $(agent_repos); do demo_warm "$r"; done
       git -C "$SC_HOME/work/$(basename "$SC_REPO")" fetch -q origin main 2>/dev/null && \
         git -C "$SC_HOME/work/$(basename "$SC_REPO")" rev-parse origin/main >"$SC_HOME/state/config.last" 2>/dev/null || true
       demo_logline "$by" "$exp" "$([ "$save" = 1 ] && echo true || echo false)"
