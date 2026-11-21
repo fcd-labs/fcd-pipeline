@@ -1084,10 +1084,19 @@ cmd_ci() {
   finish_run success ""
 }
 
-emit_deployed() { # service.deployed, with the changelog up to this version for a Dashboard that shows it (contract 0.5.0)
-  local changelog=""
-  [ "$R_V05" = 1 ] && changelog=",\"changelog\":$(json_str "$(changelog_until "$R_REPO" "$R_VERSION")")"
-  emit "dev.cdevents.service.deployed.0.2.0" "$R_SUBPRODUCT" "$(printf '{"environment":{"id":%s},"artifactId":%s%s}' "$(json_str "$R_ENV")" "$(json_str "pkg:git/$R_NAME@$R_SHA")" "$changelog")"
+emit_deployed() { # service.deployed, with the changelog and what runs along (such as stubs), for a Dashboard of 0.5.0
+  local extra="" along="" svc v
+  if [ "$R_V05" = 1 ]; then
+    extra=",\"changelog\":$(json_str "$(changelog_until "$R_REPO" "$R_VERSION")")"
+    # Containers deployed along that are not part of the sub-product (such as stubs), with their version.
+    for svc in $(compose_r "$R_PROJECT" config --services 2>/dev/null); do
+      case " $R_CONTAINERS " in *" $svc "*) continue ;; esac
+      v=$(ver_get "$R_REPO" "$(container_var "$svc")")
+      [ -n "$v" ] && along="${along:+$along,}$(json_str "$svc"):$(json_str "$v")"
+    done
+    extra="$extra,\"alongside\":{$along}"
+  fi
+  emit "dev.cdevents.service.deployed.0.2.0" "$R_SUBPRODUCT" "$(printf '{"environment":{"id":%s},"artifactId":%s%s}' "$(json_str "$R_ENV")" "$(json_str "pkg:git/$R_NAME@$R_SHA")" "$extra")"
 }
 
 run_steps_json() { # until -> ,"steps":[...]: the names of the steps of this run, in order (only for a Dashboard that knows them)
