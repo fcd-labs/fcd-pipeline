@@ -1345,6 +1345,17 @@ cmd_agent() {
   while true; do agent_once "$sc" || true; flush_outbox >/dev/null 2>&1 || true; sleep "$FCD_AGENT_INTERVAL"; done
 }
 
+demo_unmerged_hint() { # in demo mode: the prepared branches that are not merged yet, and how to merge them
+  [ "$(cfg Pipeline "$(cfg_first Pipeline)" spec/source origin)" = local-git ] || return 0
+  local r b out=""
+  for r in $(agent_repos); do
+    for b in $(git -C "$FCD_HOME/git/$r.git" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vx main || true); do
+      git -C "$FCD_HOME/git/$r.git" merge-base --is-ancestor "$b" main 2>/dev/null || out="${out:+$out, }$r $b"
+    done
+  done
+  [ -z "$out" ] || printf ' – nog niet gemerged: %s. Merge eerst: ./fcd-pipeline/fcd demo merge' "$out"
+}
+
 agent_command() { # showcase repository: carry out one command of the Dashboard (start a run, reset the demo)
   local line id kind by save
   line=$(command_claim start-run,demo-reset)
@@ -1358,7 +1369,7 @@ agent_command() { # showcase repository: carry out one command of the Dashboard 
       export FCD_TRIGGER_KIND=human FCD_TRIGGER_NAME="$by"
       agent_once "$1" || AGENT_FAILED=1
       unset FCD_TRIGGER_KIND FCD_TRIGGER_NAME
-      if [ "$AGENT_RAN" = 0 ]; then command_done "$id" "done" "niets nieuws op main: geen run"
+      if [ "$AGENT_RAN" = 0 ]; then command_done "$id" "done" "niets nieuws op main: geen run$(demo_unmerged_hint)"
       elif [ "$AGENT_FAILED" = 1 ]; then command_done "$id" failed "$AGENT_RESULT"
       else command_done "$id" "done" "$AGENT_RESULT"; fi ;;
     demo-reset)
