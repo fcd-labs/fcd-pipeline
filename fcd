@@ -1317,7 +1317,7 @@ agent_once() { # showcase repository
     if [ ! -d "$work/.git" ]; then git clone -q "$(repo_url "$r")" "$work" || { info "$r: clone mislukt"; continue; }; fi
     git -C "$work" remote set-url origin "$(repo_url "$r")"
     # Only what is on main: what the product owner merged. Never code from a pull request.
-    git -C "$work" fetch -q --prune --tags origin main 2>/dev/null || { info "$r: fetch mislukt"; continue; }
+    git -C "$work" fetch -q --prune --force --tags origin main 2>/dev/null || { info "$r: fetch mislukt"; continue; }
     head=$(git -C "$work" rev-parse origin/main)
     last=$(cat "$state" 2>/dev/null || true)
     [ "$head" = "$last" ] && continue
@@ -1510,7 +1510,7 @@ demo_deploy() { # repo: deploy what is on main of the local git server (the star
   local r=$1 work="$SC_HOME/work/$1"
   [ -d "$work/.git" ] || git clone -q "$(repo_url "$r")" "$work"
   git -C "$work" remote set-url origin "$(repo_url "$r")"
-  git -C "$work" fetch -q --prune --prune-tags --tags origin main
+  git -C "$work" fetch -q --prune --prune-tags --force --tags origin main
   git -C "$work" checkout -q --detach origin/main && git -C "$work" clean -qfdx -e .fcd
   git -C "$work" tag -l | while read -r t; do git -C "$work" ls-remote --exit-code --tags origin "refs/tags/$t" >/dev/null || git -C "$work" tag -d "$t" >/dev/null; done
   git -C "$work" rev-parse origin/main >"$SC_HOME/state/repo-$r.last"
