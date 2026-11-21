@@ -4,6 +4,18 @@ Alle wijzigingen per versie. Formaat: [Keep a Changelog](https://keepachangelog.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-21
+
+### Toegevoegd
+- Logregels volgens contract 0.4.0 (live weergave van het Dashboard, fcd-labs/fcd-pipeline#13): begin en einde van elke stap en gate.
+  - `fcd-qualitygate.started` vóór elke gate.
+  - Mensgate op de werkplek: komt de run bij de mensgate en is de versie hoger dan de laatste release, dan wacht de gate op de goedkeurder (`waitingFor`: `QualityGate.spec.approver`, anders "product owner"; actie "merge op main met een hogere versie").
+  - `testsuiterun.started` en `fcd-testsuiterun.progressed` voor integratie en end-to-end: end-to-end met `expected` (`playwright test --list`) en een tussenstand uit de uitvoer, hoogstens één per seconde; integratie een tussenstand na elk contractdoel. Unittests alleen de eindstand.
+  - `excerpt` bij een mislukte stap: één regel uit de log van de stap (de eerste met `FAIL` of `ERROR`, anders de laatste), hoogstens 300 tekens, geheimen gemaskeerd.
+  - `steps` bij `pipelinerun.started`: de stappen van deze run, in volgorde (ook bij `--until`).
+- De nieuwe logregels gaan alleen naar een Dashboard dat ze kent: de vastgelegde Dashboard-versie van de showcase is 0.4.0 of hoger. Anders blijft alles zoals in 0.5.2.
+- `fcd up` geeft het Dashboard de configuratie van de showcase (`FCD_CONFIG_DIR=<showcase-repo>/fcd`, alleen-lezen gemount).
+
 ## [0.5.2] - 2026-11-21
 
 ### Toegevoegd

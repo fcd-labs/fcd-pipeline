@@ -181,6 +181,7 @@ ver_gt() { # $1 > $2 (semver x.y.z)
   [ "${a2:-0}" -ne "${b2:-0}" ] && { [ "${a2:-0}" -gt "${b2:-0}" ]; return; }
   [ "${a3:-0}" -gt "${b3:-0}" ]
 }
+ver_ge() { [ -n "$1" ] && ! ver_gt "$2" "$1"; }   # $1 >= $2; an empty version is never >=
 last_tag() { git -C "$1" tag --list 'v[0-9]*' --sort=-v:refname | head -1; }
 
 changelog_heading() { # the heading line of a version in CHANGELOG.md
@@ -237,6 +238,71 @@ custom_data() {
     "$(json_str "$SC_NAME")" "$(json_str "$R_EXPERIMENT")" "$(json_str "$R_ENV")" "$(json_str "$R_RELEASE_TYPE")"
 }
 
+# Log lines of contract 0.4.0 (begin and end of every step and gate, for the live view of the Dashboard) go only
+# to a Dashboard that knows them: the pinned Dashboard version of the showcase is 0.4.0 or higher (R_LIVE=1).
+LIVE_SINCE_DASHBOARD=0.4.0
+R_LIVE=0
+
+gate_started() { # gate key(afterSteps|beforeSteps) steps [waitingFor_json]
+  [ "$R_LIVE" = 1 ] || return 0
+  emit "dev.cdeventsx.fcd-qualitygate.started.0.1.0" "$1-gate" "$(printf '{"gate":%s,%s:%s%s}' "$(json_str "$1")" "$(json_str "$2")" "$(json_str "$3")" "${4:+,\"waitingFor\":$4}")"
+}
+
+test_started() { # kind [expected]
+  [ "$R_LIVE" = 1 ] || return 0
+  emit "dev.cdevents.testsuiterun.started.0.2.0" "$1" "$(printf '{"testSuite":{"id":%s,"name":%s},"testType":%s%s}' "$(json_str "$R_ID-$1")" "$(json_str "$1")" "$(json_str "$1")" "${2:+,\"expected\":$2}")"
+}
+
+test_progressed() { # kind passed failed skipped: the count so far
+  [ "$R_LIVE" = 1 ] || return 0
+  emit "dev.cdeventsx.fcd-testsuiterun.progressed.0.1.0" "$1" "$(printf '{"testSuite":{"id":%s,"name":%s},"testType":%s,"tests":%s,"passed":%s,"failed":%s,"skipped":%s}' "$(json_str "$R_ID-$1")" "$(json_str "$1")" "$(json_str "$1")" "$(( $2 + $3 + $4 ))" "$2" "$3" "$4")"
+}
+
+watch_progress() { # kind output pid counter: a progressed log line at most once per second, only when the count changed
+  local kind=$1 out=$2 pid=$3 counter=$4 last="0 0 0" now p f s
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    now=$("$counter" "$out")
+    [ "$now" = "$last" ] && continue
+    last=$now; read -r p f s <<<"$now"
+    test_progressed "$kind" "$p" "$f" "$s"
+  done
+}
+
+playwright_counts() { # output of the list reporter -> "passed failed skipped" so far
+  awk '/^ *(✓|ok) +[0-9]+ / { p++ } /^ *(✘|x) +[0-9]+ / { f++ } /^ *- +[0-9]+ / { s++ } END { print p + 0, f + 0, s + 0 }' "$1" 2>/dev/null
+}
+
+mask_secrets() { # text -> the text with secrets replaced by ***
+  local s=$1 f v
+  # The generated secrets of the showcase on this machine, by value.
+  for f in "$SC_HOME"/secrets/*; do
+    [ -s "$f" ] || continue
+    v=$(cat "$f"); s=${s//"$v"/***}
+  done
+  # Well-known token formats and credentials in URLs (case-sensitive).
+  s=$(printf '%s' "$s" | sed -E -e 's/gh[pousr]_[A-Za-z0-9]{20,}/***/g' -e 's/github_pat_[A-Za-z0-9_]{20,}/***/g' \
+    -e 's/AKIA[0-9A-Z]{16}/***/g' -e 's#://[^/[:space:]:@]+:[^/[:space:]@]+@#://***@#g')
+  # Bearer/Basic credentials and key=value or key: value pairs with a secret name (any case).
+  local had=0; shopt -q nocasematch && had=1; shopt -s nocasematch
+  local re1='(bearer|basic)[[:space:]]+([^[:space:]*"'"'"']+)'
+  local re2='(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|authorization|credentials?)(["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"']?)([^[:space:]*"'"'"',;&]+)'
+  while [[ $s =~ $re1 ]]; do s=${s/"${BASH_REMATCH[0]}"/"${BASH_REMATCH[1]} ***"}; done
+  while [[ $s =~ $re2 ]]; do s=${s/"${BASH_REMATCH[0]}"/"${BASH_REMATCH[1]}${BASH_REMATCH[2]}***"}; done
+  [ "$had" = 1 ] || shopt -u nocasematch
+  printf '%s' "$s"
+}
+
+step_excerpt() { # log -> one line of the output of a failed step: the first with FAIL or ERROR, else the last non-empty one
+  local clean line
+  clean=$(sed -e $'s/\033\\[[0-9;]*[A-Za-z]//g' -e $'s/\r//g' "$1" 2>/dev/null || true)
+  line=$(printf '%s\n' "$clean" | grep -E 'FAIL|ERROR|Error:' | head -1 || true)
+  [ -n "$line" ] || line=$(printf '%s\n' "$clean" | grep -v '^[[:space:]]*$' | tail -1 || true)
+  line=${line//$'\t'/ }; line=${line#"${line%%[![:space:]]*}"}
+  line=$(mask_secrets "$line")
+  printf '%s' "${line:0:300}"
+}
+
 fcd_secret() { # name: a generated secret per showcase on this machine, never in git (mode 600)
   local f="$SC_HOME/secrets/$1"
   if [ ! -s "$f" ]; then
@@ -283,7 +349,9 @@ run_step() { # number name
     [ "$GATE_REASONS" != "$before" ] || GATE_REASONS="${GATE_REASONS:+$GATE_REASONS; }$title: $STEP_REASON"
     bad "  $STEP_REASON"; tail -15 "$log" | sed 's/^/    /'
   else outcome=succeeded; ok "  gelukt (${dur}s)"; fi
-  emit "dev.cdevents.taskrun.finished.0.2.0" "$name" "$(printf '{"taskName":%s,"step":%s,"title":%s,"pipelineRun":{"id":%s},"outcome":%s,"reason":%s}' "$(json_str "$name")" "$n" "$(json_str "$title")" "$(json_str "$R_ID")" "$(json_str "$outcome")" "$(json_str "$STEP_REASON")")" "$dur"
+  local excerpt=""
+  [ "$outcome" = failed ] && [ "$R_LIVE" = 1 ] && excerpt=",\"excerpt\":$(json_str "$(step_excerpt "$log")")"
+  emit "dev.cdevents.taskrun.finished.0.2.0" "$name" "$(printf '{"taskName":%s,"step":%s,"title":%s,"pipelineRun":{"id":%s},"outcome":%s,"reason":%s%s}' "$(json_str "$name")" "$n" "$(json_str "$title")" "$(json_str "$R_ID")" "$(json_str "$outcome")" "$(json_str "$STEP_REASON")" "$excerpt")" "$dur"
 }
 
 # A step runs in a subshell; it passes results back through this file.
@@ -296,6 +364,7 @@ has() { declare -F "$1" >/dev/null; }
 gate() { # name after_steps (as text for the log line)
   # An approved explain covers only the reasons that contain its rule; any other reason closes the gate.
   local name=$1 after=$2 outcome=open reason="" explains="" open_reasons="" r id nl=$'\n'
+  gate_started "$name" afterSteps "$after"
   if [ -n "$GATE_REASONS" ]; then
     while IFS= read -r r; do
       [ -n "$r" ] || continue
@@ -587,12 +656,17 @@ step_integration_tests() { # the sub-product with stubs in a short-lived environ
   checks=$(cfg_list Step integration-tests spec/contractChecks | paste -sd, -)
   examples=$(cfg Step integration-tests spec/maxExamples 25)
   mkdir -p "$R_DIR/reports/integration"
+  # Schemathesis has no usable live count: the count so far after every contract target.
+  local c_tests c_failed c_skipped
+  test_started integration
   for t in $CI_CONTRACT_TARGETS; do # name=spec@url
     name=${t%%=*}; spec=${t#*=}; spec=${spec%@*}; url=${t##*@}
     echo "== schemathesis $name: $spec against $url (checks: ${checks:-all})"
     docker run --rm --network "${R_EPHEMERAL}_default" -v "$R_REPO":/spec:ro -v "$R_DIR/reports/integration":/reports \
       "$TOOL_SCHEMATHESIS" run "/spec/$spec" --url "$url" --checks "${checks:-all}" --max-examples "$examples" --workers 1 \
       --report junit --report-junit-path "/reports/TEST-$name.xml" || true
+    read -r c_tests c_failed c_skipped _ <<<"$(junit_counts "$R_DIR/reports/integration")"
+    test_progressed integration "$(( c_tests - c_failed - c_skipped ))" "$c_failed" "$c_skipped"
   done
   report_tests integration "$R_DIR/reports/integration" "$(threshold build integrationTestsFailed/max 0)"
 }
@@ -724,10 +798,21 @@ step_end_to_end_tests() { # Playwright on the deployed sub-product
   local tag="fcd-e2e/$R_NAME:$R_VERSION"
   mkdir -p "$R_DIR/reports/e2e"; chmod 777 "$R_DIR/reports/e2e"
   docker build -t "$tag" "$R_REPO/$CI_E2E_DIR"
+  local expected="" out="$R_DIR/e2e-output.log" pid
+  if [ "$R_LIVE" = 1 ]; then
+    expected=$(docker run --rm --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true "$tag" --list 2>/dev/null \
+      | sed -n 's/^Total: \([0-9][0-9]*\) test.*/\1/p' | tail -1 || true)
+  fi
+  test_started end-to-end "$expected"
+  : >"$out"
   docker run --rm --network "${R_E2E_PROJECT:-$R_PROJECT}_default" \
     --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true --shm-size 1g \
     -v "$R_DIR/reports/e2e":/reports -e PLAYWRIGHT_JUNIT_OUTPUT_FILE=/reports/TEST-e2e.xml \
-    "$tag" --reporter=list,junit || true
+    "$tag" --reporter=list,junit >"$out" 2>&1 &
+  pid=$!
+  [ "$R_LIVE" = 1 ] && watch_progress end-to-end "$out" "$pid" playwright_counts
+  wait "$pid" || true
+  cat "$out"
   report_tests end-to-end "$R_DIR/reports/e2e" "$(threshold deploy endToEndTestsFailed/max 0)"
 }
 
@@ -783,6 +868,7 @@ start_run() { # repo env showcase-dir
   R_PIPELINE=$(cfg_first Pipeline)
   R_STEPS=$(cfg_list Pipeline "$R_PIPELINE" spec/steps)
   R_STEP_COUNT=$(printf '%s\n' "$R_STEPS" | grep -c .)
+  R_LIVE=0; ver_ge "$(dashboard_version)" "$LIVE_SINCE_DASHBOARD" && R_LIVE=1
   local ts; ts=$(git -C "$R_REPO" log -1 --format=%at HEAD^2 2>/dev/null || git -C "$R_REPO" log -1 --format=%at HEAD)
   R_COMMIT_TIME=$(date -u -r "$ts" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$ts" +%Y-%m-%dT%H:%M:%SZ)
   R_PROJECT="$SC_PREFIX-$R_SUBPRODUCT"
@@ -853,7 +939,7 @@ cmd_ci() {
   start_run "$repo" "$env" "$sc"
   R_T0=$(now_s)
   say "${C_B}fcd ci${C_0} $R_NAME $R_SUBPRODUCT $R_VERSION @ $R_SHA (showcase $SC_NAME, omgeving $R_ENV, $R_TRIGGER_KIND: $R_TRIGGER_NAME, $R_RELEASE_TYPE)"
-  emit "dev.cdevents.pipelinerun.started.0.2.0" "$R_ID" "$(printf '{"pipelineName":%s,"outcome":"running"}' "$(json_str "$R_NAME")")"
+  emit "dev.cdevents.pipelinerun.started.0.2.0" "$R_ID" "$(printf '{"pipelineName":%s,"outcome":"running"%s}' "$(json_str "$R_NAME")" "$(run_steps_json "$until")")"
   local n=0 step g
   for step in $R_STEPS; do
     n=$((n + 1))
@@ -872,13 +958,33 @@ cmd_ci() {
   finish_run success ""
 }
 
+run_steps_json() { # until -> ,"steps":[...]: the names of the steps of this run, in order (only for a Dashboard that knows them)
+  [ "$R_LIVE" = 1 ] || return 0
+  local n=0 step out=""
+  for step in $R_STEPS; do
+    n=$((n + 1)); [ "$n" -le "$1" ] || break
+    out="${out:+$out,}$(json_str "$step")"
+  done
+  printf ',"steps":[%s]' "$out"
+}
+
 human_gate() { # gate: approval by a human (configuration: QualityGate.spec.approval)
   local g=$1 approval; approval=$(cfg QualityGate "$g" spec/approval)
   [ "$approval" = merge-on-main-with-higher-version ] || die "goedkeuring '$approval' kan de Pipeline nog niet (issue)"
-  [ "$R_ENV" = lokaal ] || return 0
-  local tag old; tag=$(last_tag "$R_REPO"); old=${tag#v}
+  local tag old before approver; tag=$(last_tag "$R_REPO"); old=${tag#v}
+  before=$(cfg_list QualityGate "$g" spec/beforeSteps | paste -sd, -)
+  if [ "$R_ENV" = werkplek ]; then
+    # Reached the human gate: every automatic gate before it is open (a closed gate stops the run).
+    # It waits for the approval only when a merge on main would release (a higher version).
+    { [ -z "$tag" ] || ver_gt "$R_VERSION" "$old"; } && [ "$R_LIVE" = 1 ] || return 0
+    approver=$(cfg QualityGate "$g" spec/approver "product owner")
+    gate_started "$g" beforeSteps "$before" "$(printf '{"kind":"human","name":%s,"action":"merge op main met een hogere versie"}' "$(json_str "$approver")")"
+    info "$g-gate wacht op $approver: merge op main met een hogere versie ($R_VERSION)"
+    return 0
+  fi
   if [ -z "$tag" ] || ver_gt "$R_VERSION" "$old"; then
     R_RELEASE=1
+    gate_started "$g" beforeSteps "$before"
     emit "dev.cdeventsx.fcd-qualitygate.evaluated.0.1.0" "$g-gate" "$(printf '{"gate":%s,"afterSteps":"","outcome":"open","reason":%s,"explain":"","explainDetails":[]}' "$(json_str "$g")" "$(json_str "goedgekeurd door $(git -C "$R_REPO" log -1 --format=%an HEAD): merge op main met versie $R_VERSION${tag:+ (was $old)}")")"
     ok "${C_B}$g-gate open${C_0}: merge op main, versie $R_VERSION"
   else
@@ -944,7 +1050,8 @@ dashboard_version() { cfg Dashboard "$(cfg_first Dashboard)" spec/uses/version; 
 dashboard_up() { # the Dashboard of the showcase: pinned version, own store, own port
   local dir; dir=$(pinned fcd-dashboard "$(dashboard_version)")
   local exp; exp=$(experiment_of)
-  DASHBOARD_DB_PASSWORD=$(fcd_secret dashboard-db) DEFAULT_EXPERIMENT="$exp" \
+  # The Dashboard reads the configuration of the showcase read-only (steps, gates, Dashboard.spec.live).
+  DASHBOARD_DB_PASSWORD=$(fcd_secret dashboard-db) DEFAULT_EXPERIMENT="$exp" FCD_CONFIG_DIR="$SC_REPO/fcd" \
     docker compose -p "$SC_PREFIX-dashboard" --project-directory "$dir" --env-file "$dir/versions.env" \
     -f "$dir/docker-compose.yml" up -d --build --remove-orphans >"$SC_HOME/dashboard-up.log" 2>&1 \
     || { tail -20 "$SC_HOME/dashboard-up.log"; die "Dashboard start niet"; }

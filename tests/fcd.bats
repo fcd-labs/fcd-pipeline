@@ -128,6 +128,75 @@ PROPS
   [[ "$GATE_REASONS" != *"versheid frontend"* ]]
 }
 
+@test "ver_ge: the new log lines only for a Dashboard of 0.4.0 or higher" {
+  ver_ge 0.4.0 0.4.0
+  ver_ge 0.10.0 0.4.0
+  ! ver_ge 0.3.1 0.4.0
+  ! ver_ge "" 0.4.0
+}
+
+@test "start of a run: steps of this run in order, also with --until, only for a Dashboard that knows them" {
+  R_STEPS=$'static-check\nunit-tests\ncontract-test\nbuild'
+  R_LIVE=1
+  [ "$(run_steps_json 999)" = ',"steps":["static-check","unit-tests","contract-test","build"]' ]
+  [ "$(run_steps_json 2)" = ',"steps":["static-check","unit-tests"]' ]
+  R_LIVE=0
+  [ -z "$(run_steps_json 999)" ]
+}
+
+@test "excerpt: the first line with FAIL or ERROR, without colours, secrets masked" {
+  SC_HOME=$(mktemp -d); f=$(mktemp)
+  printf '\033[31m[INFO] build\033[0m\n  [ERROR] OrderServiceTest failed password=hunter2\nlast\n' >"$f"
+  [ "$(step_excerpt "$f")" = '[ERROR] OrderServiceTest failed password=***' ]
+}
+
+@test "excerpt: else the last non-empty line, at most 300 characters" {
+  SC_HOME=$(mktemp -d); f=$(mktemp)
+  printf 'one\nthe last line\n\n\n' >"$f"
+  [ "$(step_excerpt "$f")" = 'the last line' ]
+  printf '%0400d\n' 0 >"$f"
+  [ "$(step_excerpt "$f" | wc -c | tr -d ' ')" = 300 ]
+}
+
+@test "mask_secrets: secrets of the showcase, tokens, credentials in URLs and key=value pairs" {
+  SC_HOME=$(mktemp -d); mkdir -p "$SC_HOME/secrets"; printf 'S3cr3tValue123' >"$SC_HOME/secrets/dashboard-db"
+  out=$(mask_secrets 'db S3cr3tValue123 url https://app:pw@host/x Token: abc Authorization: Bearer eyJ.x ghp_abcdefghijklmnopqrstuvwxyz0123 ok')
+  [ "$out" = 'db *** url https://***@host/x Token: *** Authorization: *** *** *** ok' ]
+}
+
+@test "a gate sends its start, only for a Dashboard that knows it" {
+  R_DIR=$(mktemp -d)
+  emit() { printf '%s %s\n' "$1" "$3" >>"$R_DIR/lines"; }
+  R_LIVE=0; gate_started code afterSteps static-check
+  [ ! -s "$R_DIR/lines" ]
+  R_LIVE=1; gate_started code afterSteps static-check,unit-tests
+  grep -qx 'dev.cdeventsx.fcd-qualitygate.started.0.1.0 {"gate":"code","afterSteps":"static-check,unit-tests"}' "$R_DIR/lines"
+}
+
+@test "human gate on the werkplek: waits for the approver when a merge would release" {
+  CFG=$(mktemp); R_DIR=$(mktemp -d); R_REPO=$(mktemp -d); git -C "$R_REPO" init -q
+  printf 'QualityGate/human/spec/beforeSteps/0=release\nQualityGate/human/spec/approval=merge-on-main-with-higher-version\nQualityGate/human/spec/approver=Johannes\n' >"$CFG"
+  emit() { printf '%s %s\n' "$1" "$3" >>"$R_DIR/lines"; }
+  R_ENV=werkplek R_VERSION=0.2.0 R_LIVE=1
+  human_gate human
+  grep -qx 'dev.cdeventsx.fcd-qualitygate.started.0.1.0 {"gate":"human","beforeSteps":"release","waitingFor":{"kind":"human","name":"Johannes","action":"merge op main met een hogere versie"}}' "$R_DIR/lines"
+  [ "$R_RELEASE" != 1 ]
+}
+
+@test "human gate on the werkplek: without an approver in the configuration, the product owner" {
+  CFG=$(mktemp); R_DIR=$(mktemp -d); R_REPO=$(mktemp -d); git -C "$R_REPO" init -q
+  printf 'QualityGate/human/spec/beforeSteps/0=release\nQualityGate/human/spec/approval=merge-on-main-with-higher-version\n' >"$CFG"
+  emit() { printf '%s\n' "$3" >>"$R_DIR/lines"; }
+  R_ENV=werkplek R_VERSION=0.2.0 R_LIVE=1
+  human_gate human
+  grep -q '"name":"product owner"' "$R_DIR/lines"
+}
+
+@test "test counts so far from the list reporter of Playwright" {
+  f=$(mktemp)
+  printf '  ✓  1 [chromium] › a.spec.ts:3:1 › a (1.1s)\n  ✘  2 [chromium] › b\n  -  3 [chromium] › c\n  ✓  4 [chromium] › d\n' >"$f"
+  [ "$(playwright_counts "$f")" = "2 1 1" ]
+}
 
 @test "cfg_load reads all declarative files of a showcase with yq" {
   command -v docker >/dev/null || skip "no docker in the test container"
