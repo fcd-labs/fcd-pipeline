@@ -4,6 +4,17 @@ Alle wijzigingen per versie. Formaat: [Keep a Changelog](https://keepachangelog.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-21
+
+### Toegevoegd
+- Lokale git-server (`Pipeline.spec.source: local-git`): bare repositories in `~/.fcd/git`; de agent, de vastgelegde versies en de releases gebruiken alleen die. Geen push naar remote.
+- Mensgate met de knop op het Dashboard (`QualityGate.spec.approval: dashboard-button`): bij de start (`Pipeline.spec.trigger: dashboard-button`: de agent draait alleen na de startknop, en alleen wat gemerged is) en vóór het releasen (de run wacht op "Release goedkeuren"; dicht na `FCD_APPROVAL_TIMEOUT` seconden). De naam van wie drukt staat in de logregel.
+- `fcd demo reset [--save]`: bewaart desgewenst de run en het statusrapport, zet de lokale git terug naar `demo-start` (de klaarstaande branches weer terug, nieuwere tags weg), start een lege log (nieuw experiment), rolt de start opnieuw uit en zet de reset als logregel in de log. Ook via de knop "Demo opnieuw" op het Dashboard.
+- `fcd demo diff [branch]` en `fcd demo merge [branch]`: de klaarstaande wijziging laten zien en lokaal mergen, met de naam van de goedkeurder.
+- Stappen per container (`Step.spec.level: container`): statische controle, unittests, contracttest en bouwen draaien per container van het deelproduct, elk met een eigen logregel (`container`). Contracten per container (`Contract.spec.container`). Stubs zijn geen deel van het deelproduct: hun image wordt alleen gebouwd als het ontbreekt.
+- Ingekorte stappen voor de demo, met een goedgekeurde afwijking: end-to-end alleen de tests van `Step.spec.grep`; security, versheid, SBOM en licenties van dezelfde inhoud uit de cache van de voorbereiding (`Step.spec.cache`).
+- De changelog tot en met de uitgerolde versie in `service.deployed` (contract 0.5.0), voor de changelog-tab van het Dashboard.
+
 ## [0.6.0] - 2026-11-21
 
 ### Toegevoegd

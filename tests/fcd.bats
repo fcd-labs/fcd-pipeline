@@ -201,3 +201,47 @@ PROPS
 @test "cfg_load reads all declarative files of a showcase with yq" {
   command -v docker >/dev/null || skip "no docker in the test container"
 }
+
+@test "json_field reads strings, booleans and numbers from a flat command of the Dashboard" {
+  body='{"id":"5c0e2f7a-9d3b-4c1e-8f6a-0b2d4e6f8a10","kind":"demo-reset","save":true,"requestedBy":"Johannes","status":"claimed"}'
+  [ "$(json_field "$body" id)" = 5c0e2f7a-9d3b-4c1e-8f6a-0b2d4e6f8a10 ]
+  [ "$(json_field "$body" kind)" = demo-reset ]
+  [ "$(json_field "$body" save)" = true ]
+  [ "$(json_field "$body" requestedBy)" = Johannes ]
+  [ -z "$(json_field "$body" run)" ]
+}
+
+@test "human gate with the button: open at the start, waits before releasing until the approval, then releases" {
+  CFG=$(mktemp); R_DIR=$(mktemp -d); R_REPO=$(mktemp -d); git -C "$R_REPO" init -q
+  printf 'QualityGate/human/spec/beforeSteps/0=static-check\nQualityGate/human/spec/beforeSteps/1=release\nQualityGate/human/spec/approval=dashboard-button\nQualityGate/human/spec/approver=Johannes\n' >"$CFG"
+  emit() { printf '%s %s\n' "$1" "$3" >>"$R_DIR/lines"; }
+  # command_claim runs in a subshell: count the calls in a file. The second call finds the approval.
+  command_claim() { echo x >>"$R_DIR/claims"; [ "$(wc -l <"$R_DIR/claims")" -ge 2 ] && printf 'c1\tapprove-release\tJohannes\t\n'; return 0; }
+  command_done() { printf 'done %s %s\n' "$1" "$2" >>"$R_DIR/lines"; }
+  sleep() { :; }
+  R_ENV=lokaal R_VERSION=1.0.1 R_LIVE=1 R_STEPS=$'static-check\nrelease' R_TRIGGER_NAME=Johannes R_SUBPRODUCT=bestellen R_ID=r1 R_RELEASE=0
+  human_gate human static-check
+  grep -q '"outcome":"open","reason":"gestart door Johannes (knop op het Dashboard)"' "$R_DIR/lines"
+  [ "$R_RELEASE" = 0 ]
+  human_gate human release
+  grep -q '"waitingFor":{"kind":"human","name":"Johannes","action":"release bestellen 1.0.1 goedkeuren op het Dashboard"}' "$R_DIR/lines"
+  grep -q '"reason":"goedgekeurd door Johannes: release 1.0.1 (knop op het Dashboard)"' "$R_DIR/lines"
+  grep -qx 'done c1 done' "$R_DIR/lines"
+  [ "$R_RELEASE" = 1 ]
+}
+
+@test "the changelog up to a version, without Unreleased" {
+  d=$(mktemp -d)
+  printf '# Changelog\n\n## [Unreleased]\n- x\n\n## [1.0.1] - 2026-11-25\n- bar\n\n## [1.0.0] - 2026-11-21\n- start\n' >"$d/CHANGELOG.md"
+  out=$(changelog_until "$d" 1.0.1)
+  [ "$(printf '%s\n' "$out" | head -1)" = "## [1.0.1] - 2026-11-25" ]
+  printf '%s' "$out" | grep -q '## \[1.0.0\]'
+  ! printf '%s' "$out" | grep -q Unreleased
+}
+
+@test "a step per container sends its container, only to a Dashboard of 0.5.0 or higher" {
+  R_CONTAINER=bestellen-backend R_V05=1
+  [ "$(container_json)" = ',"container":"bestellen-backend"' ]
+  R_V05=0
+  [ -z "$(container_json)" ]
+}
