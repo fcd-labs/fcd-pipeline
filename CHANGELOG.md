@@ -8,7 +8,7 @@ Alle wijzigingen per versie. Formaat: [Keep a Changelog](https://keepachangelog.
 
 ### Toegevoegd
 - Lokale git-server (`Pipeline.spec.source: local-git`): bare repositories in `~/.fcd/git`; de agent, de vastgelegde versies en de releases gebruiken alleen die. Geen push naar remote.
-- Mensgate met de knop op het Dashboard (`QualityGate.spec.approval: dashboard-button`): bij de start (`Pipeline.spec.trigger: dashboard-button`: de agent draait alleen na de startknop, en alleen wat gemerged is) en vóór het releasen (de run wacht op "Release goedkeuren"; dicht na `FCD_APPROVAL_TIMEOUT` seconden). De naam van wie drukt staat in de logregel.
+- Goedkeuring met de knop op het Dashboard (`QualityGate.spec.approval: dashboard-button`): bij de start (`Pipeline.spec.trigger: dashboard-button`: de agent draait alleen na de startknop, en alleen wat gemerged is) en vóór het releasen (de run wacht op "Release goedkeuren"; dicht na `FCD_APPROVAL_TIMEOUT` seconden). De naam van wie drukt staat in de logregel.
 - `fcd demo reset [--save]`: bewaart desgewenst de run en het statusrapport, zet de lokale git terug naar `demo-start` (de klaarstaande branches weer terug, nieuwere tags weg), start een lege log (nieuw experiment), rolt de start opnieuw uit en zet de reset als logregel in de log. Ook via de knop "Demo opnieuw" op het Dashboard.
 - `fcd demo diff [branch]` en `fcd demo merge [branch]`: de klaarstaande wijziging laten zien en lokaal mergen, met de naam van de goedkeurder; ook via de knop "Patch mergen" op het Dashboard. De merge komt als logregel in de log (`fcd-demo.merged`).
 - De reset rolt de start uit via de Pipeline zelf (alleen de Pipeline rolt uit): live op het Dashboard, met de stappen tot en met de end-to-end test. De reset-logregel noemt de klaarstaande wijzigingen.
@@ -26,7 +26,7 @@ Alle wijzigingen per versie. Formaat: [Keep a Changelog](https://keepachangelog.
 ### Toegevoegd
 - Logregels volgens contract 0.4.0 (live weergave van het Dashboard, fcd-labs/fcd-pipeline#13): begin en einde van elke stap en gate.
   - `fcd-qualitygate.started` vóór elke gate.
-  - Mensgate op de werkplek: komt de run bij de mensgate en is de versie hoger dan de laatste release, dan wacht de gate op de goedkeurder (`waitingFor`: `QualityGate.spec.approver`, anders "product owner"; actie "merge op main met een hogere versie").
+  - Goedkeuring op de werkplek: komt de run bij de goedkeuring en is de versie hoger dan de laatste release, dan wacht de gate op de goedkeurder (`waitingFor`: `QualityGate.spec.approver`, anders "product owner"; actie "merge op main met een hogere versie").
   - `testsuiterun.started` en `fcd-testsuiterun.progressed` voor integratie en end-to-end: end-to-end met `expected` (`playwright test --list`) en een tussenstand uit de uitvoer, hoogstens één per seconde; integratie een tussenstand na elk contractdoel. Unittests alleen de eindstand.
   - `excerpt` bij een mislukte stap: één regel uit de log van de stap (de eerste met `FAIL` of `ERROR`, anders de laatste), hoogstens 300 tekens, geheimen gemaskeerd.
   - `steps` bij `pipelinerun.started`: de stappen van deze run, in volgorde (ook bij `--until`).
@@ -118,13 +118,13 @@ Alle wijzigingen per versie. Formaat: [Keep a Changelog](https://keepachangelog.
 
 ### Opgelost
 - Bij twee redenen tegelijk verdween het scheidingsteken in de reden van een gate.
-- De trigger van een merge op `main` is de persoon die mergede, niet de AI die de commits schreef; ook de goedkeurder in de mensgate.
+- De trigger van een merge op `main` is de persoon die mergede, niet de AI die de commits schreef; ook de goedkeurder in de goedkeuring.
 - De agent slaat repositories zonder `versions.env` over, zonder foutmelding.
 
 ## [0.1.0] - 2026-11-20
 
 ### Toegevoegd
-- `fcd`: het bash-script dat de enige weg is. `check`, `ci` (CI-stappen 1–10 met code-, bouw-, security-, uitrol- en mensgate), `bump`, `hooks` (pre-push), `agent`, `up`, `down`, `status`, `logs`.
+- `fcd`: het bash-script dat de enige weg is. `check`, `ci` (CI-stappen 1–10 met code-, bouw-, security-, uitrolgate en goedkeuring), `bump`, `hooks` (pre-push), `agent`, `up`, `down`, `status`, `logs`.
 - Na elke stap en gate een logregel (CDEvents) naar het Dashboard; zonder Dashboard in een outbox die later wordt verstuurd.
 - Tools in containers met vaste versie en digest (`tools.env`); licentiebeleid in `trivy/trivy-license.yaml`.
 - Unittests met bats, lint met ShellCheck.

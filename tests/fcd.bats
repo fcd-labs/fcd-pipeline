@@ -41,21 +41,21 @@ setup() {
 Explanation/EXP-001/spec/gate=security
 Explanation/EXP-001/spec/rule=versheid frontend
 Explanation/EXP-001/spec/subject=sk-demo
-Explanation/EXP-001/spec/approver=Johannes
+Explanation/EXP-001/spec/approver=sim007
 Explanation/EXP-001/spec/until=2999-12-31
 Explanation/EXP-OLD/spec/gate=security
 Explanation/EXP-OLD/spec/rule=kwetsbaarheid
-Explanation/EXP-OLD/spec/approver=Johannes
+Explanation/EXP-OLD/spec/approver=sim007
 Explanation/EXP-OLD/spec/until=2000-01-01
 Explanation/EXP-OTHER/spec/gate=security
 Explanation/EXP-OTHER/spec/rule=licentie
 Explanation/EXP-OTHER/spec/subject=fcd-dashboard
-Explanation/EXP-OTHER/spec/approver=Johannes
+Explanation/EXP-OTHER/spec/approver=sim007
 Explanation/EXP-LIST/spec/gate=security
 Explanation/EXP-LIST/spec/rule=versheid backend
 Explanation/EXP-LIST/spec/subjects/0=sk-demo
 Explanation/EXP-LIST/spec/subjects/1=fcd-dashboard
-Explanation/EXP-LIST/spec/approver=Johannes
+Explanation/EXP-LIST/spec/approver=sim007
 PROPS
   [ "$(explain_for security 'versheid frontend (npm): meer dan 0 major-versie(s) achter')" = EXP-001 ]
   [ -z "$(explain_for security 'image x: kwetsbaarheid (CRITICAL,HIGH)')" ]
@@ -67,7 +67,7 @@ PROPS
 
 @test "a gate keeps every reason, and an explain covers only its own" {
   CFG=$(mktemp); R_DIR=$(mktemp -d); R_NAME=sk-demo
-  printf 'Explanation/EXP-001/spec/gate=security\nExplanation/EXP-001/spec/rule=versheid\nExplanation/EXP-001/spec/approver=Johannes\nExplanation/EXP-001/spec/until=2999-12-31\n' >"$CFG"
+  printf 'Explanation/EXP-001/spec/gate=security\nExplanation/EXP-001/spec/rule=versheid\nExplanation/EXP-001/spec/approver=sim007\nExplanation/EXP-001/spec/until=2999-12-31\n' >"$CFG"
   emit() { printf '%s\n' "$3" >"$R_DIR/gate.json"; }
   finish_run() { :; }
   GATE_REASONS="image x: kritieke of hoge kwetsbaarheid; versheid: een library loopt achter"
@@ -79,8 +79,8 @@ PROPS
 
 @test "explain_json gives the details of an explain for the log line" {
   CFG=$(mktemp)
-  printf 'Explanation/EXP-001/spec/gate=security\nExplanation/EXP-001/spec/rule=versheid\nExplanation/EXP-001/spec/reason=Angular 21 -> 22\nExplanation/EXP-001/spec/approver=Johannes\nExplanation/EXP-001/spec/until=2026-12-31\n' >"$CFG"
-  [ "$(explain_json EXP-001)" = '{"id":"EXP-001","gate":"security","rule":"versheid","reason":"Angular 21 -> 22","approver":"Johannes","until":"2026-12-31"}' ]
+  printf 'Explanation/EXP-001/spec/gate=security\nExplanation/EXP-001/spec/rule=versheid\nExplanation/EXP-001/spec/reason=Angular 21 -> 22\nExplanation/EXP-001/spec/approver=sim007\nExplanation/EXP-001/spec/until=2026-12-31\n' >"$CFG"
+  [ "$(explain_json EXP-001)" = '{"id":"EXP-001","gate":"security","rule":"versheid","reason":"Angular 21 -> 22","approver":"sim007","until":"2026-12-31"}' ]
 }
 
 @test "bump raises the sub-product version once per change, compared with main" {
@@ -175,11 +175,11 @@ PROPS
 
 @test "human gate on the werkplek: waits for the approver when a merge would release" {
   CFG=$(mktemp); R_DIR=$(mktemp -d); R_REPO=$(mktemp -d); git -C "$R_REPO" init -q
-  printf 'QualityGate/human/spec/beforeSteps/0=release\nQualityGate/human/spec/approval=merge-on-main-with-higher-version\nQualityGate/human/spec/approver=Johannes\n' >"$CFG"
+  printf 'QualityGate/human/spec/beforeSteps/0=release\nQualityGate/human/spec/approval=merge-on-main-with-higher-version\nQualityGate/human/spec/approver=sim007\n' >"$CFG"
   emit() { printf '%s %s\n' "$1" "$3" >>"$R_DIR/lines"; }
   R_ENV=werkplek R_VERSION=0.2.0 R_LIVE=1
   human_gate human
-  grep -qx 'dev.cdeventsx.fcd-qualitygate.started.0.1.0 {"gate":"human","beforeSteps":"release","waitingFor":{"kind":"human","name":"Johannes","action":"merge op main met een hogere versie"}}' "$R_DIR/lines"
+  grep -qx 'dev.cdeventsx.fcd-qualitygate.started.0.1.0 {"gate":"human","beforeSteps":"release","waitingFor":{"kind":"human","name":"sim007","action":"merge op main met een hogere versie"}}' "$R_DIR/lines"
   [ "$R_RELEASE" != 1 ]
 }
 
@@ -203,29 +203,29 @@ PROPS
 }
 
 @test "json_field reads strings, booleans and numbers from a flat command of the Dashboard" {
-  body='{"id":"5c0e2f7a-9d3b-4c1e-8f6a-0b2d4e6f8a10","kind":"demo-reset","save":true,"requestedBy":"Johannes","status":"claimed"}'
+  body='{"id":"5c0e2f7a-9d3b-4c1e-8f6a-0b2d4e6f8a10","kind":"demo-reset","save":true,"requestedBy":"sim007","status":"claimed"}'
   [ "$(json_field "$body" id)" = 5c0e2f7a-9d3b-4c1e-8f6a-0b2d4e6f8a10 ]
   [ "$(json_field "$body" kind)" = demo-reset ]
   [ "$(json_field "$body" save)" = true ]
-  [ "$(json_field "$body" requestedBy)" = Johannes ]
+  [ "$(json_field "$body" requestedBy)" = sim007 ]
   [ -z "$(json_field "$body" run)" ]
 }
 
 @test "human gate with the button: open at the start, waits before releasing until the approval, then releases" {
   CFG=$(mktemp); R_DIR=$(mktemp -d); R_REPO=$(mktemp -d); git -C "$R_REPO" init -q
-  printf 'QualityGate/human/spec/beforeSteps/0=static-check\nQualityGate/human/spec/beforeSteps/1=release\nQualityGate/human/spec/approval=dashboard-button\nQualityGate/human/spec/approver=Johannes\n' >"$CFG"
+  printf 'QualityGate/human/spec/beforeSteps/0=static-check\nQualityGate/human/spec/beforeSteps/1=release\nQualityGate/human/spec/approval=dashboard-button\nQualityGate/human/spec/approver=sim007\n' >"$CFG"
   emit() { printf '%s %s\n' "$1" "$3" >>"$R_DIR/lines"; }
   # command_claim runs in a subshell: count the calls in a file. The second call finds the approval.
-  command_claim() { echo x >>"$R_DIR/claims"; [ "$(wc -l <"$R_DIR/claims")" -ge 2 ] && printf 'c1\tapprove-release\tJohannes\t\n'; return 0; }
+  command_claim() { echo x >>"$R_DIR/claims"; [ "$(wc -l <"$R_DIR/claims")" -ge 2 ] && printf 'c1\tapprove-release\tsim007\t\n'; return 0; }
   command_done() { printf 'done %s %s\n' "$1" "$2" >>"$R_DIR/lines"; }
   sleep() { :; }
-  R_ENV=lokaal R_VERSION=1.0.1 R_LIVE=1 R_STEPS=$'static-check\nrelease' R_TRIGGER_NAME=Johannes R_SUBPRODUCT=bestellen R_ID=r1 R_RELEASE=0
+  R_ENV=lokaal R_VERSION=1.0.1 R_LIVE=1 R_STEPS=$'static-check\nrelease' R_TRIGGER_NAME=sim007 R_SUBPRODUCT=bestellen R_ID=r1 R_RELEASE=0
   human_gate human static-check
-  grep -q '"outcome":"open","reason":"gestart door Johannes (knop op het Dashboard)"' "$R_DIR/lines"
+  grep -q '"outcome":"open","reason":"gestart door sim007 (knop op het Dashboard)"' "$R_DIR/lines"
   [ "$R_RELEASE" = 0 ]
   human_gate human release
-  grep -q '"waitingFor":{"kind":"human","name":"Johannes","action":"release bestellen 1.0.1 goedkeuren op het Dashboard"}' "$R_DIR/lines"
-  grep -q '"reason":"goedgekeurd door Johannes: release 1.0.1 (knop op het Dashboard)"' "$R_DIR/lines"
+  grep -q '"waitingFor":{"kind":"human","name":"sim007","action":"release bestellen 1.0.1 goedkeuren op het Dashboard"}' "$R_DIR/lines"
+  grep -q '"reason":"goedgekeurd door sim007: release 1.0.1 (knop op het Dashboard)"' "$R_DIR/lines"
   grep -qx 'done c1 done' "$R_DIR/lines"
   [ "$R_RELEASE" = 1 ]
 }
