@@ -11,8 +11,8 @@ Meer over deze showcase: https://fcd-labs.github.io/fcd/showcases/demo/
 ```bash
 ./fcd check --showcase ../fcd-demo   # wat mist er?
 ./fcd up --showcase ../fcd-demo      # Dashboard en Pipeline-agent van de showcase, in de vastgelegde versies
-./fcd ci ../sk-demo                  # de stappen en gates van de showcase, lokaal (omgeving werkplek)
-./fcd hooks ../sk-demo               # dezelfde stappen vóór elke push
+./fcd ci ../sk-bestellen                  # de stappen en gates van de showcase, lokaal (omgeving werkplek)
+./fcd hooks ../sk-bestellen               # dezelfde stappen vóór elke push
 ./fcd report --showcase ../fcd-demo  # statusrapport en log in de showcase-repository
 ```
 
