@@ -974,7 +974,7 @@ step_end_to_end_tests() { # Playwright on the deployed sub-product
 
 step_release() { # git tag + GitHub Release with the text from CHANGELOG.md (configuration: Pipeline.spec.release)
   [ "$R_ENV" = lokaal ] || { s_skip "alleen na een merge op main (agent)"; return 0; }
-  [ "$R_RELEASE" = 1 ] || { s_skip "geen nieuwe versie (mensgate niet van toepassing)"; return 0; }
+  [ "$R_RELEASE" = 1 ] || { s_skip "geen nieuwe versie (goedkeuring niet van toepassing)"; return 0; }
   local pattern tag notes="$R_DIR/release-notes.md"
   pattern=$(cfg Pipeline "$R_PIPELINE" spec/release/tag "v{version}"); tag=${pattern//\{version\}/$R_VERSION}
   changelog_section "$R_REPO" "$R_VERSION" >"$notes"
