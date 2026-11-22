@@ -372,7 +372,7 @@ run_step() { # number name [container]: a step for the sub-product, or for one o
   title=$(cfg Step "$name" metadata/title "$name")
   fn="step_$(printf '%s' "$name" | tr '-' '_')"
   local log="$R_DIR/step-$n-$name${R_CONTAINER:+-$R_CONTAINER}.log"
-  STEP_REASON=""; STEP_SKIPPED=0
+  STEP_REASON=""; STEP_SKIPPED=0; STEP_UNCHANGED=0
   say "${C_B}[$n/$R_STEP_COUNT] $title${R_CONTAINER:+ ($R_CONTAINER)}${C_0}"
   emit "dev.cdevents.taskrun.started.0.2.0" "$name" "$(printf '{"taskName":%s,"step":%s,"title":%s,"pipelineRun":{"id":%s},"outcome":"running"%s}' "$(json_str "$name")" "$n" "$(json_str "$title")" "$(json_str "$R_ID")" "$(container_json)")"
   t0=$(now_s)
@@ -380,7 +380,7 @@ run_step() { # number name [container]: a step for the sub-product, or for one o
   set +e
   if [ -n "$R_CONTAINER" ] && case " $R_UNCHANGED " in *" $R_CONTAINER "*) true ;; *) false ;; esac; then
     # A container has its own lifecycle: same version, same code as what is deployed, so nothing to check or build.
-    rc=0; STEP_SKIPPED=1
+    rc=0; STEP_SKIPPED=1; STEP_UNCHANGED=1
     STEP_REASON="$R_CONTAINER $(ver_get "$R_REPO" "$(container_var "$R_CONTAINER")") ongewijzigd (draait al)"
     echo "$STEP_REASON" >"$log"
   elif has "$fn"; then ( set -e; "$fn" ) >"$log" 2>&1 <&-; rc=$?
@@ -398,7 +398,9 @@ run_step() { # number name [container]: a step for the sub-product, or for one o
   else outcome=succeeded; ok "  gelukt (${dur}s)"; fi
   local excerpt=""
   [ "$outcome" = failed ] && [ "$R_LIVE" = 1 ] && excerpt=",\"excerpt\":$(json_str "$(step_excerpt "$log")")"
-  emit "dev.cdevents.taskrun.finished.0.2.0" "$name" "$(printf '{"taskName":%s,"step":%s,"title":%s,"pipelineRun":{"id":%s},"outcome":%s,"reason":%s%s%s}' "$(json_str "$name")" "$n" "$(json_str "$title")" "$(json_str "$R_ID")" "$(json_str "$outcome")" "$(json_str "$STEP_REASON")" "$excerpt" "$(container_json)")" "$dur"
+  local unchanged=""
+  [ "$STEP_UNCHANGED" = 1 ] && [ "$R_V05" = 1 ] && unchanged=',"unchanged":true'
+  emit "dev.cdevents.taskrun.finished.0.2.0" "$name" "$(printf '{"taskName":%s,"step":%s,"title":%s,"pipelineRun":{"id":%s},"outcome":%s,"reason":%s%s%s%s}' "$(json_str "$name")" "$n" "$(json_str "$title")" "$(json_str "$R_ID")" "$(json_str "$outcome")" "$(json_str "$STEP_REASON")" "$excerpt" "$(container_json)" "$unchanged")" "$dur"
   R_CONTAINER=""
 }
 
