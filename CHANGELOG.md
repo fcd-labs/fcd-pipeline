@@ -21,6 +21,10 @@ Alle wijzigingen per versie. Formaat: [Keep a Changelog](https://keepachangelog.
 - Ingekorte stappen voor de demo, met een goedgekeurde afwijking: end-to-end alleen de tests van `Step.spec.grep`; security, versheid, SBOM en licenties van dezelfde inhoud uit de cache van de voorbereiding (`Step.spec.cache`).
 - De changelog tot en met de uitgerolde versie in `service.deployed` (contract 0.5.0), voor de changelog-tab van het Dashboard.
 
+### Opgelost
+- Een container die niet gewijzigd is, start zijn stappen niet meer: alleen de eindlogregel (`unchanged`), zodat het Dashboard hem meteen groen toont in plaats van vier keer kort "bezig".
+- **Demo opnieuw** werkt altijd, in elke fase: gaat er een run, dan stopt de agent hem meteen (ook midden in een stap; de run sluit af met "afgebroken: Demo opnieuw"), wacht hij op de Goedkeuring, dan sluit die. Knoppen van vóór de reset (start, merge) vervallen. Demo opnieuw gaat altijd voor.
+
 ## [0.6.0] - 2026-11-21
 
 ### Toegevoegd

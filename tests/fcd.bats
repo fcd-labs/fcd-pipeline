@@ -267,3 +267,30 @@ PROPS
   [ -z "$R_UNCHANGED" ]
   [ "$R_SAME_VERSION_CHANGED" = " fe" ]
 }
+
+@test "an unchanged container does not start: only the finished log line, skipped as unchanged" {
+  CFG=$(mktemp); R_DIR=$(mktemp -d); R_REPO=$(mktemp -d)
+  printf 'Step/static-check/metadata/title=Statische controle\n' >"$CFG"
+  printf 'FE_VERSION=1.0.0\n' >"$R_REPO/versions.env"
+  emit() { printf '%s %s\n' "$1" "$3" >>"$R_DIR/lines"; }
+  container_var() { echo FE_VERSION; }
+  R_UNCHANGED=" fe" R_STEP_COUNT=10 R_ID=r1 R_LIVE=0 GATE_REASONS=""
+  run_step 1 static-check fe
+  ! grep -q 'taskrun.started' "$R_DIR/lines"
+  grep -q 'taskrun.finished.*"outcome":"skipped"' "$R_DIR/lines"
+}
+
+@test "Demo opnieuw while the run waits for the approval: the gate closes (afgebroken) and the run stops" {
+  CFG=$(mktemp); R_DIR=$(mktemp -d); R_REPO=$(mktemp -d); git -C "$R_REPO" init -q
+  printf 'QualityGate/human/spec/beforeSteps/0=static-check\nQualityGate/human/spec/beforeSteps/1=release\nQualityGate/human/spec/approval=dashboard-button\nQualityGate/human/spec/approver=sim007\n' >"$CFG"
+  emit() { printf '%s %s\n' "$1" "$3" >>"$R_DIR/lines"; }
+  command_claim() { return 0; }
+  demo_reset_pending() { return 0; }
+  finish_run() { printf 'finish %s %s\n' "$1" "$2" >>"$R_DIR/lines"; }
+  sleep() { :; }
+  R_ENV=lokaal R_VERSION=1.0.1 R_LIVE=1 R_STEPS=$'static-check\nrelease' R_TRIGGER_NAME=sim007 R_SUBPRODUCT=bestellen R_ID=r1 R_RELEASE=0
+  run human_gate human release
+  [ "$status" -eq 1 ]
+  grep -q '"outcome":"closed","reason":"afgebroken: Demo opnieuw"' "$R_DIR/lines"
+  grep -q 'finish failure' "$R_DIR/lines"
+}
