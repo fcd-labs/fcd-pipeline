@@ -1141,13 +1141,26 @@ cmd_ci() {
   R_T0=$(now_s)
   say "${C_B}fcd ci${C_0} $R_NAME $R_SUBPRODUCT $R_VERSION @ $R_SHA (showcase $SC_NAME, omgeving $R_ENV, $R_TRIGGER_KIND: $R_TRIGGER_NAME, $R_RELEASE_TYPE)"
   emit "dev.cdevents.pipelinerun.started.0.2.0" "$R_ID" "$(printf '{"pipelineName":%s,"outcome":"running"%s}' "$(json_str "$R_NAME")" "$(run_steps_json "$until")")"
-  local n=0 step g
+  local n=0 step g c
+  # An unchanged container is green at once: all its steps (level container) at the start of the run, not one by one.
+  if [ -n "${R_UNCHANGED// /}" ]; then
+    for step in $R_STEPS; do
+      n=$((n + 1))
+      [ "$n" -le "$until" ] || break
+      [ "$(cfg Step "$step" spec/level subProduct)" = container ] || continue
+      for c in $R_UNCHANGED; do run_step "$n" "$step" "$c"; done
+    done
+    n=0
+  fi
   for step in $R_STEPS; do
     n=$((n + 1))
     [ "$n" -le "$until" ] || break
     for g in $(gates_before "$step"); do human_gate "$g" "$step"; done
     if [ "$(cfg Step "$step" spec/level subProduct)" = container ] && [ -n "$R_CONTAINERS" ]; then
-      local c; for c in $R_CONTAINERS; do run_step "$n" "$step" "$c"; done
+      for c in $R_CONTAINERS; do
+        case " $R_UNCHANGED " in *" $c "*) continue ;; esac   # already green at the start
+        run_step "$n" "$step" "$c"
+      done
     else
       run_step "$n" "$step"
     fi
